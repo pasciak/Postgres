@@ -542,9 +542,10 @@ standard_ProcessUtility(Node *parsetree,
 				DoCopy((CopyStmt *) parsetree, queryString, &processed);
 				if (completionTag)
 					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-							 "COPY " UINT64_FORMAT, processed);
+							 "COPY `1111 " UINT64_FORMAT, processed);
 			}
 			break;
+
 
 /// pasti added 
 
