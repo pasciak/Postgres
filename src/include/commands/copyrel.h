@@ -20,17 +20,22 @@
 /* CopyStateData is private in commands/fdcopy.c */
 
 
-// define the *CopyStateFd type to be used later in fdcopy.c
-typedef struct CopyStateData *CopyStateRel;
+/* 
+
+define the *CopyState type to be used later in fdcopy.c
+note that you should not change the type
+so that fdw etc can 'talk' with each other and  copyrel through 
+the common structure 
+
+*/
+typedef struct CopyStateData *CopyState;
 
 
 //
-extern Oid DoCopyRel(const CopyStmt *stmt, const char *queryString,
-	   uint64 *processed);
+extern Oid DoCopyRel(const CopyRelStmt *stmt, const char *queryString, uint64 *processed);
 
-extern void ProcessCopyRelOptions(CopyState cstate, bool is_from, List *options);
-extern CopyState BeginCopyRel(Relation rel, const char *filename,
-			  bool is_program, List *attnamelist, List *options);
+extern void ProcessCopyRelOptions(CopyState cstate, List *options);
+
 extern void EndCopyRel(CopyState cstate);
 extern bool NextCopyRel(CopyState cstate, ExprContext *econtext,
 			 Datum *values, bool *nulls, Oid *tupleOid);

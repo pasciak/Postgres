@@ -13,7 +13,7 @@
 #include "access/xlog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
-#include "commands/copyre.h"
+#include "commands/copyrel.h"
 #include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
@@ -38,6 +38,25 @@
 #include "utils/snapmgr.h"
 
 
+typedef enum CopyDest
+{
+	COPY_FILE,					/* to/from file (or a piped program) */
+	COPY_OLD_FE,				/* to/from frontend (2.0 protocol) */
+	COPY_NEW_FE					/* to/from frontend (3.0 protocol) */
+} CopyDest;
+
+/*
+ *	Represents the end-of-line terminator type of the input
+ */
+typedef enum EolType
+{
+	EOL_UNKNOWN,
+	EOL_NL,
+	EOL_CR,
+	EOL_CRNL
+} EolType;
+
+// copystate from adopted from copy.c , minor additions here
 typedef struct CopyStateData
 {
 	/* low-level state data */
@@ -47,9 +66,6 @@ typedef struct CopyStateData
 								 * dest == COPY_NEW_FE in COPY FROM */
 	bool		fe_eof;			/* true if detected end of copy data */
 	EolType		eol_type;		/* EOL type of input */
-	int			file_encoding;	/* file or remote side's character encoding */
-	bool		need_transcoding;		/* file encoding diff from server? */
-	bool		encoding_embeds_ascii;	/* ASCII can be non-first byte? */
 
 	/* parameters from the COPY command */
 	Relation 	rel;			/* relation to copy from or to */
@@ -63,27 +79,6 @@ typedef struct CopyStateData
 	List	   *attnumlist;		/* integer list of attnums to copy */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 	bool		is_program;		/* is 'filename' a program to popen? */
-	bool		binary;			/* binary format? */
-	bool		oids;			/* include OIDs? */
-	bool		freeze;			/* freeze rows on loading? */
-	bool		csv_mode;		/* Comma Separated Value format? */
-	bool		header_line;	/* CSV header line? */
-	char	   *null_print;		/* NULL marker string (server encoding!) */
-	int			null_print_len; /* length of same */
-	char	   *null_print_client;		/* same converted to file encoding */
-	char	   *delim;			/* column delimiter (must be 1 byte) */
-	char	   *quote;			/* CSV quote char (must be 1 byte) */
-	char	   *escape;			/* CSV escape char (must be 1 byte) */
-	List	   *force_quote;	/* list of column names */
-	bool		force_quote_all;	/* FORCE QUOTE *? */
-	bool	   *force_quote_flags;		/* per-column CSV FQ flags */
-	List	   *force_notnull;	/* list of column names */
-	bool	   *force_notnull_flags;	/* per-column CSV FNN flags */
-	List	   *force_null;		/* list of column names */
-	bool	   *force_null_flags;		/* per-column CSV FN flags */
-	bool		convert_selectively;	/* do selective binary conversion? */
-	List	   *convert_select; /* list of column names (can be NIL) */
-	bool	   *convert_select_flags;	/* per-column CSV/TEXT CS flags */
 
 	/* these are just for error messages, see CopyFromErrorCallback */
 	const char *cur_relname;	/* table name for error messages */
@@ -155,24 +150,31 @@ typedef struct CopyStateData
 	int			raw_buf_len;	/* total # of bytes stored */
 } CopyStateData;
 
+// Function prototypes
+
+static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
+		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
+		  List *options);
+
 
 /*
 
 main function that is called from utility.c and performs
 the copy between relations
 
-FdCopyStmt -> see parsenodes.h fr definition 
+CopyRelStmt -> see parsenodes.h for definition 
 
+Load contents of one table into other table, and exectute
+the arbitrary statement query
 
 */
 
-extern Oid DoCopyReL(const CopyRelStmt *stmt, const char *queryString, uint64 *processed){ 
+Oid DoCopyRel(const CopyRelStmt *stmt, const char *queryString, uint64 *processed){ 
 
 	CopyState	cstate;
-	bool		is_between = stmt->is_between;
-//	bool		pipe = (stmt->filename == NULL);
 
-// we consdier two relations in this case;
+// we consider two relations in this case;
+
 	Relation	rel_from;
 	Relation 	rel_in;	
 	Oid			relid;
@@ -181,6 +183,7 @@ extern Oid DoCopyReL(const CopyRelStmt *stmt, const char *queryString, uint64 *p
 	Node	   *query = NULL;
 	List	   *range_table = NIL;
 
+	Assert((stmt->relation_in) && (!stmt->query || !stmt->relation_from));
 
 /* 
 
@@ -193,116 +196,113 @@ the standard procedure for the permission check, only the superuser can use the 
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				errmsg("must be superuser to use the COPY function"),
 				errhint("")));
-			}
+	}
 
+	if (!stmt->query)
 
-
-
-	if (stmt->relation_from)
 	{
 
-		TupleDesc	tupDesc;
-		AclMode		required_access = (is_from ? ACL_INSERT : ACL_SELECT);
-		List	   *attnums;
-		ListCell   *cur;
-		RangeTblEntry *rte;
+		Assert(stmt->relation_from);
 
-		Assert(!stmt->query);
+/* open and lock tables, the lock type depending on
+whether we read or write to table */
 
-		/* Open and lock the relation, using the appropriate lock type. */
-		rel = heap_openrv(stmt->relation,
-						  (is_from ? RowExclusiveLock : AccessShareLock));
+		rel_from = heap_openrv(stmt->relation_from,
+						 AccessShareLock);
+		relid=RelationGetRelid(rel_from);
 
-		relid = RelationGetRelid(rel);
+		rel_in = heap_openrv(stmt->relation_in,
+						  RowExclusiveLock);
+		relid2=RelationGetRelid(rel_in);
 
-		rte = makeNode(RangeTblEntry);
-		rte->rtekind = RTE_RELATION;
-		rte->relid = RelationGetRelid(rel);
-		rte->relkind = rel->rd_rel->relkind;
-		rte->requiredPerms = required_access;
-		range_table = list_make1(rte);
+	}
 
-		tupDesc = RelationGetDescr(rel);
-		attnums = CopyGetAttnums(tupDesc, rel, stmt->attlist);
-		foreach(cur, attnums)
-		{
-			int			attno = lfirst_int(cur) -
-			FirstLowInvalidHeapAttributeNumber;
+	else if (stmt->query)
+	{
 
-			if (is_from)
-				rte->insertedCols = bms_add_member(rte->insertedCols, attno);
-			else
-				rte->selectedCols = bms_add_member(rte->selectedCols, attno);
-		}
-		ExecCheckRTPerms(range_table, true);
+		Assert(!stmt->relation_from);		
+		query = stmt->query;
+		relid = InvalidOid;
+		rel_from = NULL;
 
-		/*
-		 * Permission check for row security policies.
-		 *
-		 * check_enable_rls will ereport(ERROR) if the user has requested
-		 * something invalid and will otherwise indicate if we should enable
-		 * RLS (returns RLS_ENABLED) or not for this COPY statement.
-		 *
-		 * If the relation has a row security policy and we are to apply it
-		 * then perform a "query" copy and allow the normal query processing
-		 * to handle the policies.
-		 *
-		 * If RLS is not enabled for this, then just fall through to the
-		 * normal non-filtering relation handling.
-		 */
-		if (check_enable_rls(rte->relid, InvalidOid, false) == RLS_ENABLED)
-		{
-			SelectStmt *select;
-			ColumnRef  *cr;
-			ResTarget  *target;
-			RangeVar   *from;
+		Assert(stmt->relation_in);
+	/*
+		we are using SELECT statement to load data
+		into relation_in table, hence we need to 
+		lock this table for concurrent use
 
-			if (is_from)
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				  errmsg("COPY FROM not supported with row-level security"),
-						 errhint("Use INSERT statements instead.")));
+	*/	
+		rel_in = heap_openrv(stmt->relation_in,
+						  RowExclusiveLock);
+		relid2=RelationGetRelid(rel_in);
+	}
+		
+	cstate = BeginCopyRel(rel_from, rel_in, query, queryString, relid, relid2, stmt->attlist, stmt->options);
 
-			/* Build target list */
-			cr = makeNode(ColumnRef);
+	*processed = ProcessCopyRel(cstate);	/* copy from database to file */
+	EndCopyRel(cstate);
 
-			if (!stmt->attlist)
-				cr->fields = list_make1(makeNode(A_Star));
-			else
-				cr->fields = stmt->attlist;
+ 	if (rel_from != NULL)
+		heap_close(rel_from, AccessShareLock);
+	if (rel_in != NULL)
+		heap_close(rel_in, NoLock);
 
-			cr->location = 1;
+	//elog(LOG, "dupaduapduapduapudapudap");
 
-			target = makeNode(ResTarget);
-			target->name = NULL;
-			target->indirection = NIL;
-			target->val = (Node *) cr;
-			target->location = 1;
+	return relid;
 
-			/*
-			 * Build RangeVar for from clause, fully qualified based on the
-			 * relation which we have opened and locked.
-			 */
-			from = makeRangeVar(get_namespace_name(RelationGetNamespace(rel)),
-								RelationGetRelationName(rel), -1);
-
-			/* Build query */
-			select = makeNode(SelectStmt);
-			select->targetList = list_make1(target);
-			select->fromClause = list_make1(from);
-
-			query = (Node *) select;
-
-			/*
-			 * Close the relation for now, but keep the lock on it to prevent
-			 * changes between now and when we start the query-based COPY.
-			 *
-			 * We'll reopen it later as part of the query-based COPY.
-			 */
-			heap_close(rel, NoLock);
-			rel = NULL;
-		}
 }
 
 
 // we need to open the second/foreign relation somehow
+
+
+static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
+		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
+		  List *options)
+{
+
+	CopyState	cstate;
+	TupleDesc	tupDesc;
+	int			num_phys_attrs;
+	MemoryContext oldcontext;
+
+	/* Allocate workspace and zero all fields */
+	cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
+
+	/*
+	 * We allocate everything used by a cstate in a new memory context. This
+	 * avoids memory leaks during repeated use of COPY in a query.
+	 */
+	cstate->copycontext = AllocSetContextCreate(CurrentMemoryContext,
+												"COPYREL",
+												ALLOCSET_DEFAULT_MINSIZE,
+												ALLOCSET_DEFAULT_INITSIZE,
+												ALLOCSET_DEFAULT_MAXSIZE);
+
+	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
+
+	/* Extract options from the statement node tree */
+	//ProcessCopyOptions(cstate, is_from, options);
+
+
+	// need to get query from raw querry and querrystring
+
+	
+	if (rel_from !=NULL && query==NULL){
+
+
+
+
+	} 
+	
+
+
+	else if (query!=NULL){
+
+
+
+	}
+	
+	return cstate;
+}

@@ -1704,7 +1704,7 @@ typedef struct CopyRelStmt
 /*
  we allow the select statement for copying between relations
  note that just as in case of copystm, only one of relation_from or 
- *querry must be not NULL
+ *querry must be not NULL. relation_in is always NOT NU
 */
 	Node	   *query;			/* the SELECT query to copy */
 
