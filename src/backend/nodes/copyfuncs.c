@@ -2952,6 +2952,24 @@ _copyCopyStmt(const CopyStmt *from)
 	return newnode;
 }
 
+//p@
+
+static CopyRelStmt *
+_copyCopyRelStmt(const CopyRelStmt *from)
+{
+	CopyRelStmt   *newnode = makeNode(CopyRelStmt);
+
+	COPY_NODE_FIELD(relation_from);
+	COPY_NODE_FIELD(query);
+	COPY_NODE_FIELD(attlist);
+	COPY_SCALAR_FIELD(is_between);
+	COPY_NODE_FIELD(relation_in);
+	COPY_NODE_FIELD(options);
+
+	return newnode;
+}
+
+
 /*
  * CopyCreateStmtFields
  *

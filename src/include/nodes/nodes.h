@@ -290,9 +290,8 @@ typedef enum NodeTag
 	T_AlterDefaultPrivilegesStmt,
 	T_ClosePortalStmt,
 	T_ClusterStmt,
-	T_CopyStmt,
+	T_CopyStmt,    
 	T_CreateStmt,
-	T_FdCopyStmt,
 	T_DefineStmt,
 	T_DropStmt,
 	T_TruncateStmt,
@@ -378,6 +377,8 @@ typedef enum NodeTag
 	T_CreatePolicyStmt,
 	T_AlterPolicyStmt,
 	T_CreateTransformStmt,
+	T_CopyRelStmt,  //p@
+
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)

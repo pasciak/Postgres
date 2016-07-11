@@ -589,7 +589,7 @@ typedef struct ColumnDef
 	char		storage;		/* attstorage setting, or 0 for default */
 	Node	   *raw_default;	/* default value (untransformed parse tree) */
 	Node	   *cooked_default; /* default value (transformed expr tree) */
-	CollateClause *collClause;	/* untransformed COLLATE spec, if any */
+	CollateClause *collClause;  /* untransformed COLLATE spec, if any */
 	Oid			collOid;		/* collation OID (InvalidOid if not set) */
 	List	   *constraints;	/* other constraints on column */
 	List	   *fdwoptions;		/* per-column FDW options */
@@ -1690,19 +1690,48 @@ typedef struct CopyStmt
 	List	   *options;		/* List of DefElem nodes */
 } CopyStmt;
 
-typedef struct FdCopyStmt
+//p@
+
+typedef struct CopyRelStmt
 {
 	NodeTag		type;
-	RangeVar   *relation;		/* the relation to copy */
+
+/* two relations to copy between	 */
+
+	RangeVar   *relation_from;		/* the relation to copy from */
+	RangeVar   *relation_in;		/* the relation to copy to */
+
+/*
+ we allow the select statement for copying between relations
+ note that just as in case of copystm, only one of relation_from or 
+ *querry must be not NULL
+*/
 	Node	   *query;			/* the SELECT query to copy */
+
+// the list of attributes passed to the select statement	
+
 	List	   *attlist;		/* List of column names (as Strings), or NIL
 								 * for all columns */
 
-	bool 		is_foreign;
-	bool		is_program;		/* is 'filename' a program to popen? */
-	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
+// check if we copy between two relations
+
+	bool 		is_between;
+
+	//bool		is_program;		/* is 'filename' a program to popen? */
+	
+/* 
+
+for now the filename is disabled , however we might want 
+to do relation -> relation -> file chain later on
+
+*/
+	//char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
+
+//list of options (see the csate and front end copy documentation)	
+
 	List	   *options;		/* List of DefElem nodes */
-} FdCopyStmt;
+
+} CopyRelStmt;
 
 /* ----------------------
  * SET Statement (includes RESET)

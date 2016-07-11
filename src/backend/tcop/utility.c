@@ -31,6 +31,7 @@
 #include "commands/collationcmds.h"
 #include "commands/conversioncmds.h"
 #include "commands/copy.h"
+#include "commands/copyrel.h"
 #include "commands/createas.h"
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
@@ -38,7 +39,6 @@
 #include "commands/event_trigger.h"
 #include "commands/explain.h"
 #include "commands/extension.h"
-#include "commands/fdcopy.h"
 #include "commands/matview.h"
 #include "commands/lockcmds.h"
 #include "commands/policy.h"
@@ -546,20 +546,19 @@ standard_ProcessUtility(Node *parsetree,
 			}
 			break;
 
-				fasdjfn fasdfj hashfhfhh
 
-/// pasti added 
+/// p@
 
-		case T_FdCopyStmt:
+		case T_CopyRelStmt:  //
 			{
-				uint64		processed;
+				uint64		processed;  // 
 
-				DoCopy((FdCopyStmt *) parsetree, queryString, &processed);
-				if (completionTag)
-					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-							 " FOREIGN COPY " UINT64_FORMAT, processed);
-			}
-			break;
+				DoCopy((CopyRelStmt *) parsetree, queryString, &processed);  //
+				if (completionTag)  // 
+					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,      //
+							 " COPYREL " UINT64_FORMAT, processed);   //
+			}  //
+			break; //
 
 		case T_PrepareStmt:
 			CheckRestrictedOperation("PREPARE");
@@ -2192,8 +2191,8 @@ CreateCommandTag(Node *parsetree)
 			tag = "COPY";
 			break;
 
-		case T_FdCopyStmt:
-			tag = "FOREIGN COPY";
+		case T_CopyRelStmt:
+			tag = "COPYREL";
 			break;
 
 		case T_RenameStmt:
@@ -2788,11 +2787,14 @@ GetCommandLogLevel(Node *parsetree)
 				lev = LOGSTMT_ALL;
 			break;
 
-		case T_FdCopyStmt:
-			if (((FdCopyStmt *) parsetree)->is_foreign)
-				lev = LOGSTMT_MOD;
-			else
-				lev = LOGSTMT_ALL;
+		case T_CopyRelStmt:
+		//	if (((FdCopyStmt *) parsetree)->is_foreign)
+		//		lev = LOGSTMT_MOD;
+		//	else
+		//		lev = LOGSTMT_ALL;
+		
+				lev = LOGSTMT_DDL;
+
 			break;
 
 
