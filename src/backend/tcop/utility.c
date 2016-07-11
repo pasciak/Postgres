@@ -542,7 +542,7 @@ standard_ProcessUtility(Node *parsetree,
 				DoCopy((CopyStmt *) parsetree, queryString, &processed);
 				if (completionTag)
 					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-							 "COPY `1111 " UINT64_FORMAT, processed);
+							 "COPY " UINT64_FORMAT, processed);
 			}
 			break;
 
