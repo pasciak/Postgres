@@ -80,6 +80,9 @@ typedef struct CopyStateData
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 	bool		is_program;		/* is 'filename' a program to popen? */
 
+	bool		oids;			/* include OIDs? */
+
+
 	/* these are just for error messages, see CopyFromErrorCallback */
 	const char *cur_relname;	/* table name for error messages */
 	int			cur_lineno;		/* line number for error messages */
@@ -239,8 +242,8 @@ whether we read or write to table */
 		
 	cstate = BeginCopyRel(rel_from, rel_in, query, queryString, relid, relid2, stmt->attlist, stmt->options);
 
-	*processed = ProcessCopyRel(cstate);	/* copy from database to file */
-	EndCopyRel(cstate);
+//	*processed = ProcessCopyRel(cstate);	/* copy from database to file */
+//	EndCopyRel(cstate);
 
  	if (rel_from != NULL)
 		heap_close(rel_from, AccessShareLock);
@@ -263,9 +266,16 @@ static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_quer
 {
 
 	CopyState	cstate;
-	TupleDesc	tupDesc;
-	int			num_phys_attrs;
+	TupleDesc	tupDesc_from;
+	TupleDesc	tupDesc_in;
+
+	int			num_phys_attrs_from;
+	int			num_phys_attrs_from_in;
+
 	MemoryContext oldcontext;
+
+	Query	   *query;
+
 
 	/* Allocate workspace and zero all fields */
 	cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
@@ -282,13 +292,90 @@ static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_quer
 
 	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
 
+/*
+
+If no SELECT passed, directlu get info about both relations under consideration
+
+*/
+
+	if (rel_from!=NULL){
+
+		Assert(!raw_query);
+
+		cstate->rel_from=rel_from;
+		cstate->rel_in=rel_in;
+		tupDesc_from = RelationGetDescr(cstate->rel_from);
+		tupDesc_in = RelationGetDescr(cstate->rel_in);
+
+		query=NULL;
+/*
+// shall we keep this check
+
+		if (cstate->oids && !cstate->rel_from->rd_rel->relhasoids)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("table \"%s\" does not have OIDs",
+							RelationGetRelationName(cstate->rel_from))));
+
+		if (cstate->oids && !cstate->reol_in->rd_rel->relhasoids)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("table \"%s\" does not have OIDs",
+							RelationGetRelationName(cstate->rel_in))));
+
+*/
+
+	}
+
+
+	else if (rel_from==NULL){
+
+/*
+
+	set up the querry and the rel_in relation
+
+*/
+
+		List	   *rewritten;
+		PlannedStmt *plan;
+		DestReceiver *dest;
+
+		Assert(raw_query);
+		cstate->rel_from = NULL;
+
+		if (cstate->oids)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("COPY (SELECT) WITH OIDS is not supported")));
+
+
+		cstate->rel_in=rel_in;
+		tupDesc_in = RelationGetDescr(cstate->rel_in);
+
+
+		rewritten = pg_analyze_and_rewrite((Node *) copyObject(raw_query),
+										   queryString, NULL, 0);
+
+		if (list_length(rewritten) != 1)
+			elog(ERROR, "unexpected rewrite result");
+
+		query = (Query *) linitial(rewritten);
+
+		plan = planner(query, 0, NULL);
+
+
+	}
+
+
 	/* Extract options from the statement node tree */
 	//ProcessCopyOptions(cstate, is_from, options);
 
 
 	// need to get query from raw querry and querrystring
 
-	
+
+
+
 	if (rel_from !=NULL && query==NULL){
 
 
