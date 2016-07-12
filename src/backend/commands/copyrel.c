@@ -37,6 +37,11 @@
 #include "utils/rls.h"
 #include "utils/snapmgr.h"
 
+/*
+
+Do I need this?
+
+*/
 
 typedef enum CopyDest
 {
@@ -45,16 +50,23 @@ typedef enum CopyDest
 	COPY_NEW_FE					/* to/from frontend (3.0 protocol) */
 } CopyDest;
 
-/*
- *	Represents the end-of-line terminator type of the input
- */
-typedef enum EolType
+/* 
+
+DestReceiver for COPY (query) TO , because the COPY __ TO  needs to go somewhere
+
+NOTE: lookup dest.c and DestReceiver() function cases , each of them depending
+on the tyoe of destination container. We want relation, dont we?
+
+*/
+
+typedef struct
 {
-	EOL_UNKNOWN,
-	EOL_NL,
-	EOL_CR,
-	EOL_CRNL
-} EolType;
+    DestReceiver pub;           /* publicly-known function pointers */
+    CopyState   cstate;         /* CopyStateData for the command */
+    uint64      processed;      /* # of tuples processed */
+} DR_copy;
+  
+
 
 // copystate from adopted from copy.c , minor additions here
 typedef struct CopyStateData
@@ -65,7 +77,6 @@ typedef struct CopyStateData
 	StringInfo	fe_msgbuf;		/* used for all dests during COPY TO, only for
 								 * dest == COPY_NEW_FE in COPY FROM */
 	bool		fe_eof;			/* true if detected end of copy data */
-	EolType		eol_type;		/* EOL type of input */
 
 	/* parameters from the COPY command */
 	Relation 	rel;			/* relation to copy from or to */
@@ -100,57 +111,7 @@ typedef struct CopyStateData
 	FmgrInfo   *out_functions;	/* lookup info for output functions */
 	MemoryContext rowcontext;	/* per-row evaluation context */
 
-	/*
-	 * Working state for COPY FROM
-	 */
-	AttrNumber	num_defaults;
-	bool		file_has_oids;
-	FmgrInfo	oid_in_function;
-	Oid			oid_typioparam;
-	FmgrInfo   *in_functions;	/* array of input functions for each attrs */
-	Oid		   *typioparams;	/* array of element types for in_functions */
-	int		   *defmap;			/* array of default att numbers */
-	ExprState **defexprs;		/* array of default att expressions */
-	bool		volatile_defexprs;		/* is any of defexprs volatile? */
-	List	   *range_table;
 
-	/*
-	 * These variables are used to reduce overhead in textual COPY FROM.
-	 *
-	 * attribute_buf holds the separated, de-escaped text for each field of
-	 * the current line.  The CopyReadAttributes functions return arrays of
-	 * pointers into this buffer.  We avoid palloc/pfree overhead by re-using
-	 * the buffer on each cycle.
-	 */
-	StringInfoData attribute_buf;
-
-	/* field raw data pointers found by COPY FROM */
-
-	int			max_fields;
-	char	  **raw_fields;
-
-	/*
-	 * Similarly, line_buf holds the whole input line being processed. The
-	 * input cycle is first to read the whole line into line_buf, convert it
-	 * to server encoding there, and then extract the individual attribute
-	 * fields into attribute_buf.  line_buf is preserved unmodified so that we
-	 * can display it in error messages if appropriate.
-	 */
-	StringInfoData line_buf;
-	bool		line_buf_converted;		/* converted to server encoding? */
-	bool		line_buf_valid; /* contains the row being processed? */
-
-	/*
-	 * Finally, raw_buf holds raw data read from the data source (file or
-	 * client connection).  CopyReadLine parses this data sufficiently to
-	 * locate line boundaries, then transfers the data to line_buf and
-	 * converts it.  Note: we guarantee that there is a \0 at
-	 * raw_buf[raw_buf_len].
-	 */
-#define RAW_BUF_SIZE 65536		/* we palloc RAW_BUF_SIZE+1 bytes */
-	char	   *raw_buf;
-	int			raw_buf_index;	/* next byte to process */
-	int			raw_buf_len;	/* total # of bytes stored */
 } CopyStateData;
 
 // Function prototypes
@@ -250,7 +211,7 @@ whether we read or write to table */
 	if (rel_in != NULL)
 		heap_close(rel_in, NoLock);
 
-	//elog(LOG, "dupaduapduapduapudapudap");
+	elog(LOG, "123");
 
 	return relid;
 
@@ -264,6 +225,12 @@ static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_quer
 		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
 		  List *options)
 {
+
+/*
+
+All _from are source, all _in are target objects
+
+*/	
 
 	CopyState	cstate;
 	TupleDesc	tupDesc_from;
@@ -294,7 +261,7 @@ static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_quer
 
 /*
 
-If no SELECT passed, directlu get info about both relations under consideration
+If no SELECT passed, directly get info about both relations under consideration
 
 */
 
@@ -309,7 +276,7 @@ If no SELECT passed, directlu get info about both relations under consideration
 
 		query=NULL;
 /*
-// shall we keep this check
+//  keep this OID check ?
 
 		if (cstate->oids && !cstate->rel_from->rd_rel->relhasoids)
 			ereport(ERROR,
@@ -332,15 +299,16 @@ If no SELECT passed, directlu get info about both relations under consideration
 
 /*
 
-	set up the querry and the rel_in relation
+	set up the querry-modified rel_from and the rel_in 
 
 */
 
-		List	   *rewritten;
-		PlannedStmt *plan;
+		List	     *rewritten;
+		PlannedStmt  *plan;
 		DestReceiver *dest;
 
 		Assert(raw_query);
+
 		cstate->rel_from = NULL;
 
 		if (cstate->oids)
@@ -363,6 +331,62 @@ If no SELECT passed, directlu get info about both relations under consideration
 
 		plan = planner(query, 0, NULL);
 
+/*
+
+We have the querry planned, and now we to convert the COPY relation TO relation
+to a query based COPY statement
+
+Note that at the beginning of DoCopy the relations are locked. The planner will
+search for the locked relation again, and so we need to makes sure that
+it now finds the same relation 
+
+*/
+
+		if (queryRelId != InvalidOid)
+		{
+			
+			if (!list_member_oid(plan->relationOids, queryRelId))
+					ereport(ERROR,
+							(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					errmsg("relation referenced by COPY statement has changed")));
+		}
+
+
+/*
+
+Here we prepare the snapshot. In other words, the SELECT statement derives 
+a modified sourcce that consist of only the rows under consideration.
+
+
+*/
+		PushCopiedSnapshot(GetActiveSnapshot());
+		UpdateActiveSnapshotCommandId();
+
+		/* Create dest receiver for COPY OUT */
+
+		dest = CreateDestReceiver(DestCopyOut);
+		((DR_copy *) dest)->cstate = cstate;
+
+		/* Create a QueryDesc requesting no output */
+		cstate->queryDesc = CreateQueryDesc(plan, queryString,
+											GetActiveSnapshot(),
+											InvalidSnapshot,
+											dest, NULL, 0);
+
+		/*
+		 * Call ExecutorStart to prepare the plan for execution.
+		 *
+		 * ExecutorStart computes a result tupdesc for us
+		 */
+		ExecutorStart(cstate->queryDesc, 0);
+
+/*
+
+Hence we get the query-modfiied set of tuples 
+
+*/
+
+		tupDesc_from = cstate->queryDesc->tupDesc;
 
 	}
 
@@ -393,3 +417,4 @@ If no SELECT passed, directlu get info about both relations under consideration
 	
 	return cstate;
 }
+
