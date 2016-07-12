@@ -45,9 +45,8 @@ Do I need this?
 
 typedef enum CopyDest
 {
-	COPY_FILE,					/* to/from file (or a piped program) */
-	COPY_OLD_FE,				/* to/from frontend (2.0 protocol) */
-	COPY_NEW_FE					/* to/from frontend (3.0 protocol) */
+	COPY_RELATION					/* to/from file (or a piped program) */
+
 } CopyDest;
 
 /* 
@@ -73,9 +72,6 @@ typedef struct CopyStateData
 {
 	/* low-level state data */
 	CopyDest	copy_dest;		/* type of copy source/destination */
-	FILE	   *copy_file;		/* used if copy_dest == COPY_FILE */
-	StringInfo	fe_msgbuf;		/* used for all dests during COPY TO, only for
-								 * dest == COPY_NEW_FE in COPY FROM */
 	bool		fe_eof;			/* true if detected end of copy data */
 
 	/* parameters from the COPY command */
@@ -116,9 +112,14 @@ typedef struct CopyStateData
 
 // Function prototypes
 
-static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
-		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
-		  List *options);
+static List *CopyGetAttnums(TupleDesc tupDesc, Relation rel,
+			   List *attnamelist);
+
+static CopyState PrepareCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
+		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist, List *options);
+
+static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *query,
+		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist, List *options);
 
 
 /*
@@ -201,7 +202,10 @@ whether we read or write to table */
 		relid2=RelationGetRelid(rel_in);
 	}
 		
-	cstate = BeginCopyRel(rel_from, rel_in, query, queryString, relid, relid2, stmt->attlist, stmt->options);
+	cstate = PrepareCopyRel(rel_from, rel_in, query, queryString, relid, relid2, stmt->attlist, stmt->options);
+
+
+
 
 //	*processed = ProcessCopyRel(cstate);	/* copy from database to file */
 //	EndCopyRel(cstate);
@@ -218,13 +222,18 @@ whether we read or write to table */
 }
 
 
-// we need to open the second/foreign relation somehow
+/*
+
+This function prepares the copystate 
+
+*/
 
 
-static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
+static CopyState PrepareCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
 		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
 		  List *options)
 {
+
 
 /*
 
@@ -237,7 +246,7 @@ All _from are source, all _in are target objects
 	TupleDesc	tupDesc_in;
 
 	int			num_phys_attrs_from;
-	int			num_phys_attrs_from_in;
+	int			num_phys_attrs_in;
 
 	MemoryContext oldcontext;
 
@@ -259,12 +268,14 @@ All _from are source, all _in are target objects
 
 	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
 
+	/* Process ooptions, do it later!  */
+
+	//ProcessCopyOptions(cstate, is_from, options);
 /*
 
 If no SELECT passed, directly get info about both relations under consideration
 
 */
-
 	if (rel_from!=NULL){
 
 		Assert(!raw_query);
@@ -275,25 +286,10 @@ If no SELECT passed, directly get info about both relations under consideration
 		tupDesc_in = RelationGetDescr(cstate->rel_in);
 
 		query=NULL;
-/*
-//  keep this OID check ?
 
-		if (cstate->oids && !cstate->rel_from->rd_rel->relhasoids)
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("table \"%s\" does not have OIDs",
-							RelationGetRelationName(cstate->rel_from))));
-
-		if (cstate->oids && !cstate->reol_in->rd_rel->relhasoids)
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("table \"%s\" does not have OIDs",
-							RelationGetRelationName(cstate->rel_in))));
-
-*/
+// make the OID check here ?
 
 	}
-
 
 	else if (rel_from==NULL){
 
@@ -329,15 +325,19 @@ If no SELECT passed, directly get info about both relations under consideration
 
 		query = (Query *) linitial(rewritten);
 
+		Assert(query->commandType == CMD_SELECT);
+		Assert(query->utilityStmt == NULL);
+
+
 		plan = planner(query, 0, NULL);
 
 /*
 
-We have the querry planned, and now we to convert the COPY relation TO relation
+We have the querry planned, and now we wanr to convert the COPY relation TO relation
 to a query based COPY statement
 
 Note that at the beginning of DoCopy the relations are locked. The planner will
-search for the locked relation again, and so we need to makes sure that
+search for the locked relation again, and so we need to make sure that
 it now finds the same relation 
 
 */
@@ -355,14 +355,29 @@ it now finds the same relation
 /*
 
 Here we prepare the snapshot. In other words, the SELECT statement derives 
-a modified sourcce that consist of only the rows under consideration.
+a modified source that consist of only the rows under consideration.
 
 
 */
 		PushCopiedSnapshot(GetActiveSnapshot());
 		UpdateActiveSnapshotCommandId();
 
-		/* Create dest receiver for COPY OUT */
+		/* 
+
+		Create dest receiver for COPY OUT 
+
+		Need to figure this out: in the original copy.c, COPY query TO
+		sends data to file. In here, we send data to another relation.
+		Should we change the argument that the CreateDestReveiver gets, so 
+		that the
+
+		   case DestIntoRel:
+               return CreateIntoRelDestReceiver(NULL);
+
+        case from the dest.c is called?      
+   
+
+		*/
 
 		dest = CreateDestReceiver(DestCopyOut);
 		((DR_copy *) dest)->cstate = cstate;
@@ -391,30 +406,96 @@ Hence we get the query-modfiied set of tuples
 	}
 
 
-	/* Extract options from the statement node tree */
-	//ProcessCopyOptions(cstate, is_from, options);
+	cstate->attnumlist = CopyGetAttnums(tupDesc_from, cstate->rel_from, attnamelist);
+
+	num_phys_attrs_from = tupDesc_from->natts;
 
 
-	// need to get query from raw querry and querrystring
+	MemoryContextSwitchTo(oldcontext);
 
-
-
-
-	if (rel_from !=NULL && query==NULL){
-
-
-
-
-	} 
-	
-
-
-	else if (query!=NULL){
-
-
-
-	}
-	
 	return cstate;
 }
 
+/*
+ * CopyGetAttnums - build an integer list of attnums to be copied
+ *
+ * The input attnamelist is either the user-specified column list,
+ * or NIL if there was none (in which case we want all the non-dropped
+ * columns).
+ *
+ * rel can be NULL ... it's only used for error reports.
+ * 
+ *	Note that we want this only for the rel_from case, as this the 
+ *	relation that . Hence for now this function will be left unmodified, as in copy.c
+ *
+ */
+
+
+static List *
+CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
+{
+	List	   *attnums = NIL;
+
+	if (attnamelist == NIL)
+	{
+		/* Generate default column list */
+
+		Form_pg_attribute *attr = tupDesc->attrs;
+		int			attr_count = tupDesc->natts;
+		int			i;
+
+		for (i = 0; i < attr_count; i++)
+		{
+			if (attr[i]->attisdropped)
+				continue;
+			attnums = lappend_int(attnums, i + 1);
+		}
+	}
+	else
+	{
+		/* Validate the user-supplied list and extract attnums */
+		ListCell   *l;
+
+		foreach(l, attnamelist)
+		{
+			char	   *name = strVal(lfirst(l));
+			int			attnum;
+			int			i;
+
+			/* Lookup column name */
+			attnum = InvalidAttrNumber;
+			for (i = 0; i < tupDesc->natts; i++)
+			{
+				if (tupDesc->attrs[i]->attisdropped)
+					continue;
+				if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0)
+				{
+					attnum = tupDesc->attrs[i]->attnum;
+					break;
+				}
+			}
+			if (attnum == InvalidAttrNumber)
+			{
+				if (rel != NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+					errmsg("column \"%s\" of relation \"%s\" does not exist",
+						   name, RelationGetRelationName(rel))));
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+							 errmsg("column \"%s\" does not exist",
+									name)));
+			}
+			/* Check for duplicates */
+			if (list_member_int(attnums, attnum))
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_COLUMN),
+						 errmsg("column \"%s\" specified more than once",
+								name)));
+			attnums = lappend_int(attnums, attnum);
+		}
+	}
+
+	return attnums;
+}
