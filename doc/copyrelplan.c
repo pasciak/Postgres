@@ -555,6 +555,12 @@ Here we might need changes. If we set another relation as our target,
 then we will need to set both relations (when we work in the
 relation relation copy mode)
 
+NOTE that here only the source relation is prepared. In case we worked with two relations
+we need to prepare the target relation. Now the question is, whether the target relation
+is set by the user, or should it be used based on the input relation
+and initilailed with all its atributes automatically?
+
+
 */	
 
 	/* Process the source/target relation or query */
@@ -693,6 +699,9 @@ These three functions below should be left without major changes for now
 However, I am a bit confused about 		cstate->copy_dest = COPY_NEW_FE;
 lines here, as I am not sure where do they fit in the wider context.
 
+Note also that if we worked with two relations at the same time,
+we might need to add a second 'natts' that will correspond to the target relation
+
 
 */
 
@@ -810,6 +819,8 @@ so we need to reroute our data to memory/relation.
 This stuff below sets the output (see @HERE tags below).
 	YOU NEED TO UNDERSTAND THIS STUFF PROPERLY
 
+
+	NEED TO FIGURE OUT HOW TO DO THIS 
 */
 
 	if (pipe)
@@ -851,22 +862,15 @@ umasks ??????????????????????????????????
 			oumask = umask(S_IWGRP | S_IWOTH);
 			cstate->copy_file = AllocateFile(cstate->filename, PG_BINARY_W);
 			umask(oumask);
-			if (cstate->copy_file == NULL)
-				ereport(ERROR,
-						(errcode_for_file_access(),
-						 errmsg("could not open file \"%s\" for writing: %m",
-								cstate->filename)));
+/*
 
-			if (fstat(fileno(cstate->copy_file), &st))
-				ereport(ERROR,
-						(errcode_for_file_access(),
-						 errmsg("could not stat file \"%s\": %m",
-								cstate->filename)));
+p@
 
-			if (S_ISDIR(st.st_mode))
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("\"%s\" is a directory", cstate->filename)));
+some checks removed here
+
+
+*/			
+
 		}
 	}
 
@@ -890,6 +894,17 @@ I dont think we need changes here for now, this loops over CopyTo
 static uint64
 DoCopyTo(CopyState cstate)
 {
+
+/*
+
+p@
+
+KUBA  YOU NEED TO UNDERSTAND THE PIPPES!!! THIS COULD BE USEFUL
+
+What happens if fe_copy si FALSE in the case beloow?
+
+*/
+
 	bool		pipe = (cstate->filename == NULL);
 	bool		fe_copy = (pipe && whereToSendOutput == DestRemote);
 	uint64		processed;
@@ -961,8 +976,13 @@ and BeginCopy()) perfoms the CopyTo algorithm.
 
 Given we prepare our output target to something else than file, we will need to
 modify this function as well, so that the target is correct
+
+NOTE: I NEED TO FIGURE OUT WHERE EXACTLY IS DATA PASSED TO FILE
+
+
 )
  */
+
 static uint64
 CopyTo(CopyState cstate)
 {
@@ -972,6 +992,16 @@ CopyTo(CopyState cstate)
 	ListCell   *cur;
 	uint64		processed;
 
+/*
+
+p@ 
+
+Here the input is preparatedso no need of changes, unless FDW screws up and we need
+a way of recognizing it
+
+
+*/
+
 	if (cstate->rel)
 		tupDesc = RelationGetDescr(cstate->rel);
 	else
@@ -979,6 +1009,15 @@ CopyTo(CopyState cstate)
 	attr = tupDesc->attrs;
 	num_phys_attrs = tupDesc->natts;
 	cstate->null_print_client = cstate->null_print;		/* default */
+
+/*
+
+p@ 
+
+Here the input is preparated so no need of chages
+
+*/
+
 
 	/* We use fe_msgbuf as a per-row buffer regardless of copy_dest */
 	cstate->fe_msgbuf = makeStringInfo();
@@ -999,6 +1038,18 @@ CopyTo(CopyState cstate)
 			getTypeOutputInfo(attr[attnum - 1]->atttypid,
 							  &out_func_oid,
 							  &isvarlena);
+
+
+
+/*
+
+p@ 
+
+Here the input buffer is prepared
+
+*/
+
+
 		fmgr_info(out_func_oid, &cstate->out_functions[attnum - 1]);
 	}
 
@@ -1065,6 +1116,20 @@ CopyTo(CopyState cstate)
 		}
 	}
 
+
+/*
+
+p@ 
+
+Ok, so given that we work with the whole input relations, we scan row by row and copy
+stuff.
+
+
+
+*/
+
+
+
 	if (cstate->rel)
 	{
 		Datum	   *values;
@@ -1072,8 +1137,31 @@ CopyTo(CopyState cstate)
 		HeapScanDesc scandesc;
 		HeapTuple	tuple;
 
+
+/*
+
+p@ 
+
+Allocate memory
+*/
+
 		values = (Datum *) palloc(num_phys_attrs * sizeof(Datum));
 		nulls = (bool *) palloc(num_phys_attrs * sizeof(bool));
+
+/*
+
+p@ 
+
+Start the scan of relation, initialise with heap_beginscan
+
+Then, as long as no emmpty rows are found, scan the table and send
+data with the use of copyonerow
+
+I dont think we need to change the structure  of this, given that we
+prepare our csatate (espectially destination) correctly
+
+ */
+
 
 		scandesc = heap_beginscan(cstate->rel, GetActiveSnapshot(), 0, NULL);
 
@@ -1097,6 +1185,15 @@ CopyTo(CopyState cstate)
 	}
 	else
 	{
+
+/*
+
+p@ 
+
+Confusion, need to figure this one out. Ho
+
+*/
+
 		/* run the plan --- the dest receiver will send tuples */
 		ExecutorRun(cstate->queryDesc, ForwardScanDirection, 0L);
 		processed = ((DR_copy *) cstate->queryDesc->dest)->processed;
@@ -1117,6 +1214,7 @@ CopyTo(CopyState cstate)
 
 /*
  * Emit one row during CopyTo().
+
  */
 static void
 CopyOneRowTo(CopyState cstate, Oid tupleOid, Datum *values, bool *nulls)
@@ -1154,6 +1252,15 @@ CopyOneRowTo(CopyState cstate, Oid tupleOid, Datum *values, bool *nulls)
 			need_delim = true;
 		}
 	}
+
+/*
+
+pq 
+
+For every columne,m 
+
+
+*/
 
 	foreach(cur, cstate->attnumlist)
 	{
