@@ -1684,7 +1684,6 @@ typedef struct CopyStmt
 	List	   *attlist;		/* List of column names (as Strings), or NIL
 								 * for all columns */
 
-	RangeVar   *relation_from;		/* the relation to copy from  */
 	RangeVar   *relation_out;		/* the relation to copy to */
 
 	bool		is_between;		/* To be used for copy between relations*/

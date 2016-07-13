@@ -108,6 +108,8 @@ typedef struct CopyStateData
 
 	/* parameters from the COPY command */
 	Relation	rel;			/* relation to copy to or from */
+	Relation	rel_out;			/* output relation if copying between relations */
+
 	QueryDesc  *queryDesc;		/* executable query to copy from */
 	List	   *attnumlist;		/* integer list of attnums to copy */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
@@ -332,6 +334,11 @@ static bool CopyGetInt32(CopyState cstate, int32 *val);
 static void CopySendInt16(CopyState cstate, int16 val);
 static bool CopyGetInt16(CopyState cstate, int16 *val);
 
+/*
+
+New function prototypes go here
+
+*/
 
 static CopyState BeginCopyRel(Relation rel, Node *query, const char *queryString,
 			const Oid queryRelId, const char *filename, Relation rel_out, bool is_program,
@@ -340,8 +347,17 @@ static void EndCopyRel(CopyState cstate);
 static uint64 DoCopyRel(CopyState cstate);
 static uint64 CopyRel(CopyState cstate);
 
+static void PrepareOutRelation(CopyState cstate, const char *filename, Relation rel_out);
+/*
+
+	cstate = BeginCopyRel(rel, query, queryString, relid,
+							 stmt->filename,stmt->relation_out, stmt->is_program,
+							 stmt->attlist, stmt->options); */
 
 /*
+
+
+
  * Send copy start/stop messages for frontend copies.  These have changed
  * in past protocol redesigns.
  */
@@ -4519,58 +4535,114 @@ CreateCopyDestReceiver(void)
 /*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*/
 
 
-
-static CopyState BeginCopyRel(Relation rel, Node *query, const char *queryString,
-			const Oid queryRelId, const char *filename, Relation rel_out, bool is_program,
-			List *attnamelist, List *options)
-
-
-{
-
-		CopyState	cstate;
-		MemoryContext oldcontext;
-
-		cstate = BeginCopy(false, rel, query, queryString, queryRelId, attnamelist,
-					   options);
-	
-		oldcontext = MemoryContextSwitchTo(cstate->copycontext);
-
-
 /*
 
-Here goes the main body that will set the name of the outpu
+This initializes the CopyRel function, that is copying from relation to relation
 
 */
 
+// static CopyState BeginCopyRel(Relation rel, Node *query, const char *queryString,
+// 			const Oid queryRelId, const char *filename, Relation rel_out, bool is_program,
+// 			List *attnamelist, List *options)
 
 
+// {
 
-		MemoryContextSwitchTo(oldcontext);
-
-		return cstate;
-}
-
-static uint64 DoCopyRel(CopyState cstate){;}
-
-
-static uint64 CopyRel(CopyState cstate){;}
-
-
-static void EndCopyRel(CopyState cstate){;}
+// 		CopyState	cstate;
+// 		bool		isfile = (filename == NULL);
+// 		bool		isrelation = (rel_out != NULL);
+// 		TupleDesc	tupDesc_in;		
+// 		MemoryContext oldcontext;
 
 
 
 
-// cstate = BeginCopyTo(rel, query, queryString, relid,
-// 							 stmt->filename, stmt->is_program,
-// 							 stmt->attlist, stmt->options);
-// 		*processed = DoCopyTo(cstate);	/* copy from database to file */
-// 		EndCopyTo(cstate);
+// /*
 
-// cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
-// 							   stmt->attlist, stmt->options);
-// 		cstate->range_table = range_table;
-// 		*processed = CopyFrom(cstate);	/* copy from file to database */
+// We dont change BeginCopy as all the necessary preparations are the same
+// as in case of the CopyTo and CopyFrom, that is the source relation or 
+// query-modified relation is prepared
 
-// 		EndCopyFrom(cstate);
+// However, we still need to prepare the output relation, and for this
+// indeed we need some mods, or the separate  function to do it
+
+// */
+// 		Assert(isrelation);
+
+
+// 		cstate = BeginCopy(false, rel, query, queryString, queryRelId, attnamelist,
+// 					   options);
+// /*
+
+// Here we need to prepare rel_out, it will go to copucontext as well
+
+// */
+
+// 		PrepareOutRelation(cstate, filename, rel_out);
+
+// 		oldcontext = MemoryContextSwitchTo(cstate->copycontext);
+
+
+
+// Here goes the main body that will set the name of the output
+
+// I think here we can use the aprt of CopyFrom that prepares the relation
+// for the data input
+
+
+
+
+
+
+
+// 		MemoryContextSwitchTo(oldcontext);
+
+// 		return cstate;
+// }
+
+// static uint64 DoCopyRel(CopyState cstate){;}
+
+
+// static uint64 CopyRel(CopyState cstate){;}
+
+
+// static void EndCopyRel(CopyState cstate){;}
+
+
+// static void PrepareOutRelation(CopyState cstate, const char *filename, Relation rel, Relation rel_out){
+
+// /*
+
+// Do we use the predefined relation (the number of columns needs to agree etc)
+// or do we create a new relation base onf the rel?
+
+// */		
+
+// 		TupleDesc	tupDescOut;
+// 		tupDescOut = RelationGetDescr(rel_out);
+
+// 		attr = tupDescOut->attrs;
+// 		num_phys_attrs = tupDescOut->natts;
+
+// 		Assert(!filename);
+
+
+// 		cstate->rel_out=rel_out;
+
+
+// }
+
+
+// // cstate = BeginCopyTo(rel, query, queryString, relid,
+// // 							 stmt->filename, stmt->is_program,
+// // 							 stmt->attlist, stmt->options);
+// // 		*processed = DoCopyTo(cstate);	/* copy from database to file */
+// // 		EndCopyTo(cstate);
+
+// // cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
+// // 							   stmt->attlist, stmt->options);
+// // 		cstate->range_table = range_table;
+// // 		*processed = CopyFrom(cstate);	/* copy from file to database */
+
+// // 		EndCopyFrom(cstate);
 
