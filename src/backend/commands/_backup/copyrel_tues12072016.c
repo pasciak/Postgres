@@ -39,73 +39,20 @@
 
 
 
+
+
+
 /*
 
-Ideas:
+Do I need this?
 
-AIM: To use and to merge CopyTo and CopyFrom to COPY data between relations. 
-We want to communicate with the foreign data wrapper and 
-COPY to and from it. FDW that is the external relation 
-that allows us to access non-Postgre data from within postgres environment. 
-
-WHAT DO WE HAVE IN POSTGRES SOURCECODE:
-
-( The initial NOTE: The file in /doc/copyreplan.c  (lets call it WORKPLAN from now on
-) keeps the functions which were taken
-out of the main copy.c file and that might serve useful for the implementation of functionality at this moment. Most functions are truncated , I usually remove 
-binary, encoding etc checks as I find them not necessary at this stage. We are working 
-on the basic functionality at this stage.
-
-
-
--- CopyTo takes the data from relation (call it relFrom) and moves it to the
-file (see the top half of WORKPLAN for essential funcions associated with it)
-
--- CopyFrom takes the data from file and stores is in
-the relation (call it relIN)  (see the bottom half of WORKPLAN for essential funcions associated with it)
-
-
-Ideally, one would want Relation  --> CopyRel --> Relation,  where CopyRel is a COPY function
-that moves data directly between relations. However, this can be tough ( some implementation
-I have made up to the 12.07.2016 aimed at this, but after catchup it is time to reconsider
-the approach )
-
--- Hence, consider the CopyTo --> File --> Copyfrom first. In this scenario, we take the
-relation, copy it to file, then the file is accessed by the CopyFrom statement that
-takes data and stores it to a new relation,
-
-This is slow and has too many steps. It should be possible to do something like this
-
-CopyTo --> Temporary file in memory --> Copyfrom
-
-Hence we dont save the file to disc but create the temporary 'file'/relation in ram memory
-that can be accessed from both ways (read/write)
-
-
-
- */
-
+*/
 
 typedef enum CopyDest
 {
-	COPY_RELATION,					/* to/from file (or a piped program) */
-	COPY_FILE,
-	COPY_NEW_FE	
+	COPY_RELATION					/* to/from file (or a piped program) */
 
 } CopyDest;
-
-/*
-Not needed for now
-*/
-
-typedef enum EolType
-{
-	EOL_UNKNOWN,
-	EOL_NL,
-	EOL_CR,
-	EOL_CRNL
-} EolType;
-
 
 /* 
 
@@ -121,66 +68,32 @@ typedef struct
     DestReceiver pub;           /* publicly-known function pointers */
     CopyState   cstate;         /* CopyStateData for the command */
     uint64      processed;      /* # of tuples processed */
-
 } DR_copy;
   
 
 
-/*
-
-copystate from adopted from copy.c , minor additions here
-
-Note that I have added a new structure in the parsenodes.h called CopyRelStmt, which
-is similar ot CopyStmt but has additional fields called relation_from and relation_in
-
-*/
-
+// copystate from adopted from copy.c , minor additions here
 typedef struct CopyStateData
 {
-
-
-	Relation	relFrom;			/* source relation */
-	Relation	relIn;			/* destination relation, this could FDW */
-
-		/* low-level state data */
-
+	/* low-level state data */
 	CopyDest	copy_dest;		/* type of copy source/destination */
-	FILE	   *copy_file;		/* used if copy_dest == COPY_FILE */
-	StringInfo	fe_msgbuf;		/* used for all dests during COPY TO, only for
-								 * dest == COPY_NEW_FE in COPY FROM */
 	bool		fe_eof;			/* true if detected end of copy data */
-	EolType		eol_type;		/* EOL type of input */
-	int			file_encoding;	/* file or remote side's character encoding */
-	bool		need_transcoding;		/* file encoding diff from server? */
-	bool		encoding_embeds_ascii;	/* ASCII can be non-first byte? */
 
 	/* parameters from the COPY command */
-	Relation	rel;			/* relation to copy to or from */
+	Relation 	rel;			/* relation to copy from or to */
+
+// these two are used for COPYREL call
+
+	Relation	rel_from;			/* relation to copy from */
+	Relation	rel_in;			/* relation to copy to or from */
+
 	QueryDesc  *queryDesc;		/* executable query to copy from */
 	List	   *attnumlist;		/* integer list of attnums to copy */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 	bool		is_program;		/* is 'filename' a program to popen? */
-	bool		binary;			/* binary format? */
+
 	bool		oids;			/* include OIDs? */
-	bool		freeze;			/* freeze rows on loading? */
-	bool		csv_mode;		/* Comma Separated Value format? */
-	bool		header_line;	/* CSV header line? */
-	char	   *null_print;		/* NULL marker string (server encoding!) */
-	int			null_print_len; /* length of same */
-	char	   *null_print_client;		/* same converted to file encoding */
-	char	   *delim;			/* column delimiter (must be 1 byte) */
-	char	   *quote;			/* CSV quote char (must be 1 byte) */
-	char	   *escape;			/* CSV escape char (must be 1 byte) */
-	List	   *force_quote;	/* list of column names */
-	bool		force_quote_all;	/* FORCE QUOTE *? */
-	bool	   *force_quote_flags;		/* per-column CSV FQ flags */
-	List	   *force_notnull;	/* list of column names */
-	bool	   *force_notnull_flags;	/* per-column CSV FNN flags */
-	List	   *force_null;		/* list of column names */
-	bool	   *force_null_flags;		/* per-column CSV FN flags */
-	bool		convert_selectively;	/* do selective binary conversion? */
-	List	   *convert_select; /* list of column names (can be NIL) */
-	bool	   *convert_select_flags;	/* per-column CSV/TEXT CS flags */
+
 
 	/* these are just for error messages, see CopyFromErrorCallback */
 	const char *cur_relname;	/* table name for error messages */
@@ -199,58 +112,6 @@ typedef struct CopyStateData
 	FmgrInfo   *out_functions;	/* lookup info for output functions */
 	MemoryContext rowcontext;	/* per-row evaluation context */
 
-	/*
-	 * Working state for COPY FROM
-	 */
-	AttrNumber	num_defaults;
-	bool		file_has_oids;
-	FmgrInfo	oid_in_function;
-	Oid			oid_typioparam;
-	FmgrInfo   *in_functions;	/* array of input functions for each attrs */
-	Oid		   *typioparams;	/* array of element types for in_functions */
-	int		   *defmap;			/* array of default att numbers */
-	ExprState **defexprs;		/* array of default att expressions */
-	bool		volatile_defexprs;		/* is any of defexprs volatile? */
-	List	   *range_table;
-
-	/*
-	 * These variables are used to reduce overhead in textual COPY FROM.
-	 *
-	 * attribute_buf holds the separated, de-escaped text for each field of
-	 * the current line.  The CopyReadAttributes functions return arrays of
-	 * pointers into this buffer.  We avoid palloc/pfree overhead by re-using
-	 * the buffer on each cycle.
-	 */
-	StringInfoData attribute_buf;
-
-	/* field raw data pointers found by COPY FROM */
-
-	int			max_fields;
-	char	  **raw_fields;
-
-	/*
-	 * Similarly, line_buf holds the whole input line being processed. The
-	 * input cycle is first to read the whole line into line_buf, convert it
-	 * to server encoding there, and then extract the individual attribute
-	 * fields into attribute_buf.  line_buf is preserved unmodified so that we
-	 * can display it in error messages if appropriate.
-	 */
-	StringInfoData line_buf;
-	bool		line_buf_converted;		/* converted to server encoding? */
-	bool		line_buf_valid; /* contains the row being processed? */
-
-	/*
-	 * Finally, raw_buf holds raw data read from the data source (file or
-	 * client connection).  CopyReadLine parses this data sufficiently to
-	 * locate line boundaries, then transfers the data to line_buf and
-	 * converts it.  Note: we guarantee that there is a \0 at
-	 * raw_buf[raw_buf_len].
-	 */
-#define RAW_BUF_SIZE 65536		/* we palloc RAW_BUF_SIZE+1 bytes */
-	char	   *raw_buf;
-	int			raw_buf_index;	/* next byte to process */
-	int			raw_buf_len;	/* total # of bytes stored */
-
 
 } CopyStateData;
 
@@ -259,14 +120,12 @@ typedef struct CopyStateData
 static List *CopyGetAttnums(TupleDesc tupDesc, Relation rel,
 			   List *attnamelist);
 
-static CopyState PrepareCopyRel(Relation relFrom, Relation relIn, Node *raw_query,
+static CopyState PrepareCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
 		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist, List *options);
 
-static CopyState BeginCopyRel(Relation relFrom, Relation relIn, Node *query,
+static CopyState BeginCopyRel(Relation rel_from, Relation rel_in, Node *query,
 		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist, List *options);
 
-
-/********************************************************************************/
 
 /*
 
@@ -286,8 +145,8 @@ Oid DoCopyRel(const CopyRelStmt *stmt, const char *queryString, uint64 *processe
 
 // we consider two relations in this case;
 
-	Relation	relFrom;
-	Relation 	relIn;	
+	Relation	rel_from;
+	Relation 	rel_in;	
 	Oid			relid;
 	Oid			relid2;
 
@@ -318,13 +177,13 @@ the standard procedure for the permission check, only the superuser can use the 
 /* open and lock tables, the lock type depending on
 whether we read or write to table */
 
-		relFrom = heap_openrv(stmt->relation_from,
+		rel_from = heap_openrv(stmt->relation_from,
 						 AccessShareLock);
-		relid=RelationGetRelid(relFrom);
+		relid=RelationGetRelid(rel_from);
 
-		relIn = heap_openrv(stmt->relation_in,
+		rel_in = heap_openrv(stmt->relation_in,
 						  RowExclusiveLock);
-		relid2=RelationGetRelid(relIn);
+		relid2=RelationGetRelid(rel_in);
 
 	}
 
@@ -334,7 +193,7 @@ whether we read or write to table */
 		Assert(!stmt->relation_from);		
 		query = stmt->query;
 		relid = InvalidOid;
-		relFrom = NULL;
+		rel_from = NULL;
 
 		Assert(stmt->relation_in);
 	/*
@@ -343,12 +202,12 @@ whether we read or write to table */
 		lock this table for concurrent use
 
 	*/	
-		relIn = heap_openrv(stmt->relation_in,
+		rel_in = heap_openrv(stmt->relation_in,
 						  RowExclusiveLock);
-		relid2=RelationGetRelid(relIn);
+		relid2=RelationGetRelid(rel_in);
 	}
 		
-	cstate = PrepareCopyRel(relFrom, relIn, query, queryString, relid, relid2, stmt->attlist, stmt->options);
+	cstate = PrepareCopyRel(rel_from, rel_in, query, queryString, relid, relid2, stmt->attlist, stmt->options);
 
 
 
@@ -356,10 +215,10 @@ whether we read or write to table */
 //	*processed = ProcessCopyRel(cstate);	/* copy from database to file */
 //	EndCopyRel(cstate);
 
- 	if (relFrom != NULL)
-		heap_close(relFrom, AccessShareLock);
-	if (relIn != NULL)
-		heap_close(relIn, NoLock);
+ 	if (rel_from != NULL)
+		heap_close(rel_from, AccessShareLock);
+	if (rel_in != NULL)
+		heap_close(rel_in, NoLock);
 
 	elog(LOG, "123");
 
@@ -375,7 +234,7 @@ This function prepares the copystate
 */
 
 
-static CopyState PrepareCopyRel(Relation relFrom, Relation relIn, Node *raw_query,
+static CopyState PrepareCopyRel(Relation rel_from, Relation rel_in, Node *raw_query,
 		  const char *queryString, const Oid queryRelId, const Oid queryRelId2 ,List *attnamelist,
 		  List *options)
 {
@@ -388,8 +247,8 @@ All _from are source, all _in are target objects
 */	
 
 	CopyState	cstate;
-	TupleDesc	tupDescFrom;
-	TupleDesc	tupDescIn;
+	TupleDesc	tupDesc_from;
+	TupleDesc	tupDesc_in;
 
 	int			num_phys_attrs_from;
 	int			num_phys_attrs_in;
@@ -422,14 +281,14 @@ All _from are source, all _in are target objects
 If no SELECT passed, directly get info about both relations under consideration
 
 */
-	if (relFrom!=NULL){
+	if (rel_from!=NULL){
 
 		Assert(!raw_query);
 
-		cstate->relFrom=relFrom;
-		cstate->relIn=relIn;
-		tupDescFrom = RelationGetDescr(cstate->relFrom);
-		tupDescIn = RelationGetDescr(cstate->relIn);
+		cstate->rel_from=rel_from;
+		cstate->rel_in=rel_in;
+		tupDesc_from = RelationGetDescr(cstate->rel_from);
+		tupDesc_in = RelationGetDescr(cstate->rel_in);
 
 		query=NULL;
 
@@ -437,11 +296,11 @@ If no SELECT passed, directly get info about both relations under consideration
 
 	}
 
-	else if (relFrom==NULL){
+	else if (rel_from==NULL){
 
 /*
 
-	set up the querry-modified relFrom and the relIn 
+	set up the querry-modified rel_from and the rel_in 
 
 */
 
@@ -451,7 +310,7 @@ If no SELECT passed, directly get info about both relations under consideration
 
 		Assert(raw_query);
 
-		cstate->relFrom = NULL;
+		cstate->rel_from = NULL;
 
 		if (cstate->oids)
 			ereport(ERROR,
@@ -459,8 +318,8 @@ If no SELECT passed, directly get info about both relations under consideration
 					 errmsg("COPY (SELECT) WITH OIDS is not supported")));
 
 
-		cstate->relIn=relIn;
-		tupDescIn = RelationGetDescr(cstate->relIn);
+		cstate->rel_in=rel_in;
+		tupDesc_in = RelationGetDescr(cstate->rel_in);
 
 
 		rewritten = pg_analyze_and_rewrite((Node *) copyObject(raw_query),
@@ -547,14 +406,14 @@ Hence we get the query-modfiied set of tuples
 
 */
 
-		tupDescFrom = cstate->queryDesc->tupDesc;
+		tupDesc_from = cstate->queryDesc->tupDesc;
 
 	}
 
 
-	cstate->attnumlist = CopyGetAttnums(tupDescFrom, cstate->relFrom, attnamelist);
+	cstate->attnumlist = CopyGetAttnums(tupDesc_from, cstate->rel_from, attnamelist);
 
-	num_phys_attrs_from = tupDescFrom->natts;
+	num_phys_attrs_from = tupDesc_from->natts;
 
 
 	MemoryContextSwitchTo(oldcontext);
@@ -571,10 +430,11 @@ Hence we get the query-modfiied set of tuples
  *
  * rel can be NULL ... it's only used for error reports.
  * 
- *	Note that we want this only for the relFrom case, as this the 
+ *	Note that we want this only for the rel_from case, as this the 
  *	relation that . Hence for now this function will be left unmodified, as in copy.c
  *
  */
+
 
 static List *
 CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)

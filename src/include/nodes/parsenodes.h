@@ -1684,6 +1684,10 @@ typedef struct CopyStmt
 	List	   *attlist;		/* List of column names (as Strings), or NIL
 								 * for all columns */
 
+	RangeVar   *relation_from;		/* the relation to copy from  */
+	RangeVar   *relation_out;		/* the relation to copy to */
+
+	bool		is_between;		/* To be used for copy between relations*/
 	bool		is_from;		/* TO or FROM */
 	bool		is_program;		/* is 'filename' a program to popen? */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
@@ -1698,26 +1702,24 @@ typedef struct CopyRelStmt
 
 /* two relations to copy between	 */
 
-	RangeVar   *relation_from;		/* the relation to copy from */
+	RangeVar   *relation_from;		/* the relation to copy from  */
 	RangeVar   *relation_in;		/* the relation to copy to */
+
+	RangeVar   *relation;		/* the relation to copy */
 
 /*
  we allow the select statement for copying between relations
  note that just as in case of copystm, only one of relation_from or 
- *querry must be not NULL. relation_in is always NOT NU
+ *querry must be not NULL. relation_in is always NOT NULL
 */
 	Node	   *query;			/* the SELECT query to copy */
 
 // the list of attributes passed to the select statement	
 
 	List	   *attlist;		/* List of column names (as Strings), or NIL
-								 * for all columns */
-
-// check if we copy between two relations
-
-	bool 		is_between;
-
-	//bool		is_program;		/* is 'filename' a program to popen? */
+									 * for all columns */
+	bool 		is_from;
+	bool		is_program;		/* is 'filename' a program to popen? */
 	
 /* 
 
@@ -1725,7 +1727,7 @@ for now the filename is disabled , however we might want
 to do relation -> relation -> file chain later on
 
 */
-	//char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
+	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 
 //list of options (see the csate and front end copy documentation)	
 

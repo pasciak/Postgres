@@ -333,14 +333,6 @@ static void CopySendInt16(CopyState cstate, int16 val);
 static bool CopyGetInt16(CopyState cstate, int16 *val);
 
 
-static CopyState BeginCopyRel(Relation rel, Node *query, const char *queryString,
-			const Oid queryRelId, const char *filename, Relation rel_out, bool is_program,
-			List *attnamelist, List *options);
-static void EndCopyRel(CopyState cstate);
-static uint64 DoCopyRel(CopyState cstate);
-static uint64 CopyRel(CopyState cstate);
-
-
 /*
  * Send copy start/stop messages for frontend copies.  These have changed
  * in past protocol redesigns.
@@ -800,7 +792,6 @@ Oid
 DoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 {
 	CopyState	cstate;
-	bool		is_between=stmt->is_between;
 	bool		is_from = stmt->is_from;
 	bool		pipe = (stmt->filename == NULL);
 	Relation	rel;
@@ -938,7 +929,7 @@ DoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		rel = NULL;
 	}
 
-	if (is_from && !is_between)
+	if (is_from)
 	{
 		Assert(rel);
 
@@ -953,46 +944,14 @@ DoCopy(const CopyStmt *stmt, const char *queryString, uint64 *processed)
 		*processed = CopyFrom(cstate);	/* copy from file to database */
 		EndCopyFrom(cstate);
 	}
-	else if (!is_from && !is_between)
-
+	else
 	{
-
-
 		cstate = BeginCopyTo(rel, query, queryString, relid,
-							  stmt->filename, stmt->is_program,
+							 stmt->filename, stmt->is_program,
 							 stmt->attlist, stmt->options);
 		*processed = DoCopyTo(cstate);	/* copy from database to file */
-
 		EndCopyTo(cstate);
 	}
-
-/*
-
-p@
-
-new functs
-
-*/
-
-	else if (!is_from && is_between)
-
-	{
-
-/*
-
-
-BeginCopyRel will be modfiied BeginCopyTo, with modified target
-
-
-*/
-		cstate = BeginCopyRel(rel, query, queryString, relid,
-							 stmt->filename,stmt->relation_out, stmt->is_program,
-							 stmt->attlist, stmt->options);
-		*processed = DoCopyRel(cstate);	/* copy from database to database */
-
-		EndCopyRel(cstate);
-	}
-
 
 	/*
 	 * Close the relation. If reading, we can release the AccessShareLock we
@@ -4508,69 +4467,4 @@ CreateCopyDestReceiver(void)
 
 	return (DestReceiver *) self;
 }
-
-
-/*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*/
-
-
-
-/*  NEW FUNCTIONS SKELETON ETC */
-
-/*&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&*/
-
-
-
-static CopyState BeginCopyRel(Relation rel, Node *query, const char *queryString,
-			const Oid queryRelId, const char *filename, Relation rel_out, bool is_program,
-			List *attnamelist, List *options)
-
-
-{
-
-		CopyState	cstate;
-		MemoryContext oldcontext;
-
-		cstate = BeginCopy(false, rel, query, queryString, queryRelId, attnamelist,
-					   options);
-	
-		oldcontext = MemoryContextSwitchTo(cstate->copycontext);
-
-
-/*
-
-Here goes the main body that will set the name of the outpu
-
-*/
-
-
-
-
-		MemoryContextSwitchTo(oldcontext);
-
-		return cstate;
-}
-
-static uint64 DoCopyRel(CopyState cstate){;}
-
-
-static uint64 CopyRel(CopyState cstate){;}
-
-
-static void EndCopyRel(CopyState cstate){;}
-
-
-
-
-// cstate = BeginCopyTo(rel, query, queryString, relid,
-// 							 stmt->filename, stmt->is_program,
-// 							 stmt->attlist, stmt->options);
-// 		*processed = DoCopyTo(cstate);	/* copy from database to file */
-// 		EndCopyTo(cstate);
-
-// cstate = BeginCopyFrom(rel, stmt->filename, stmt->is_program,
-// 							   stmt->attlist, stmt->options);
-// 		cstate->range_table = range_table;
-// 		*processed = CopyFrom(cstate);	/* copy from file to database */
-
-// 		EndCopyFrom(cstate);
 

@@ -2947,6 +2947,7 @@ _copyCopyStmt(const CopyStmt *from)
 	COPY_SCALAR_FIELD(is_from);
 	COPY_SCALAR_FIELD(is_program);
 	COPY_STRING_FIELD(filename);
+	COPY_NODE_FIELD(relation_out);  // p@
 	COPY_NODE_FIELD(options);
 
 	return newnode;
@@ -2962,8 +2963,7 @@ _copyCopyRelStmt(const CopyRelStmt *from)
 	COPY_NODE_FIELD(relation_from);
 	COPY_NODE_FIELD(query);
 	COPY_NODE_FIELD(attlist);
-	COPY_SCALAR_FIELD(is_between);
-	COPY_NODE_FIELD(relation_in);
+//	COPY_NODE_FIELD(relation_out);
 	COPY_NODE_FIELD(options);
 
 	return newnode;
